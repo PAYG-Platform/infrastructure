@@ -1,0 +1,57 @@
+version: '3.8'
+
+# ==============================================================================
+# LOGGING ROTATION POLICY (Prevents host disk exhaustion from container logs)
+# ==============================================================================
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+networks:
+  rabbitmq_net:
+    name: standalone_rabbitmq_net
+    driver: bridge
+
+services:
+
+  # ============================================================================
+  # STANDALONE OPTIMIZED RABBITMQ BROKER (AMQP :5672 & SECURE AMQPS :5671)
+  # ============================================================================
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: standalone-rabbitmq
+    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RMQ_USER:-admin}
+      RABBITMQ_DEFAULT_PASS: ${RMQ_PASSWORD}
+    ports:
+      # Plaintext AMQP Listener (for private mesh / internal networks)
+      - "${BIND_IP:-0.0.0.0}:${RMQ_PORT:-5672}:5672"
+      # Native Encrypted AMQPS (TLS) Listener (for public cloud connections)
+      - "${BIND_IP:-0.0.0.0}:${RMQ_SSL_PORT:-5671}:5671"
+      # Web Management Dashboard strictly bound to 127.0.0.1 (access via SSH tunnel)
+      - "127.0.0.1:${RMQ_MGMT_PORT:-15672}:15672"
+    volumes:
+      # Persistent Mnesia message database
+      - ./data:/var/lib/rabbitmq
+      # Low-memory profile configuration
+      - ./config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      # TLS/SSL Certificates (Mounted read-only for AMQPS)
+      - ./certs:/etc/rabbitmq/certs:ro
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging: *default-logging
+    networks:
+      - rabbitmq_net

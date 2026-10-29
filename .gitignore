@@ -1,0 +1,17 @@
+# Runtime database and message stores
+data/
+**/data/
+*.rdb
+*.aof
+mnesia/
+*.pid
+
+# Sensitive environment secrets
+.env
+.env.*
+!.env.example
+
+# Logs and system artifacts
+*.log
+logs/
+.DS_Store

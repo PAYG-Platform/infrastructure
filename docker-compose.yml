@@ -1,0 +1,93 @@
+version: '3.8'
+
+# ==============================================================================
+# LOGGING ROTATION POLICY (Prevents host disk exhaustion from container logs)
+# ==============================================================================
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+networks:
+  infra_net:
+    name: shared_infra_net
+    driver: bridge
+
+services:
+
+  # ============================================================================
+  # 1. OPTIMIZED RABBITMQ BROKER (AMQP :5672 & SECURE AMQPS :5671)
+  # ============================================================================
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: shared-rabbitmq
+    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RMQ_USER:-admin}
+      RABBITMQ_DEFAULT_PASS: ${RMQ_PASSWORD}
+    ports:
+      # Plaintext AMQP Listener (for private mesh / WireGuard networks)
+      - "${BIND_IP:-0.0.0.0}:${RMQ_PORT:-5672}:5672"
+      # Native Encrypted AMQPS (TLS) Listener (for public cloud connections)
+      - "${BIND_IP:-0.0.0.0}:${RMQ_SSL_PORT:-5671}:5671"
+      # Web Management Dashboard strictly bound to 127.0.0.1 (access via SSH tunnel)
+      - "127.0.0.1:${RMQ_MGMT_PORT:-15672}:15672"
+    volumes:
+      # Persistent Mnesia message database
+      - ./rabbitmq/data:/var/lib/rabbitmq
+      # Low-memory profile configuration
+      - ./rabbitmq/config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      # TLS/SSL Certificates (Mounted read-only for AMQPS)
+      - ./certs/rabbitmq:/etc/rabbitmq/certs:ro
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging: *default-logging
+    networks:
+      - infra_net
+
+  # ============================================================================
+  # 2. BOUNDED REDIS STORE (SECURE REDISS TLS :6379)
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: shared-redis
+    restart: always
+    command: >
+      redis-server /usr/local/etc/redis/redis.conf
+      --requirepass ${REDIS_PASSWORD}
+    ports:
+      # Redis Listener (Accepts TLS/Rediss or plaintext based on redis.conf)
+      - "${BIND_IP:-0.0.0.0}:${REDIS_PORT:-6379}:6379"
+    volumes:
+      # Persistent AOF/RDB data directory
+      - ./redis/data:/data
+      # Hard-capped 256MB memory and eviction configuration
+      - ./redis/config/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      # TLS/SSL Certificates (Mounted read-only for Rediss)
+      - ./certs/redis:/usr/local/etc/redis/certs:ro
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+        reservations:
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    logging: *default-logging
+    networks:
+      - infra_net
